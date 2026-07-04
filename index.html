@@ -11,175 +11,191 @@
 </head>
 <body>
 
-    <div id="interface">
-        <label for="variant-select">Выберите дизайн:</label>
-        <select id="variant-select" disabled>
-            <option value="">Загрузка модели...</option>
-        </select>
-    </div>
+<div id="interface">
+    <label for="variant-select">Выберите дизайн:</label>
+    <select id="variant-select" disabled>
+        <option value="">Загрузка модели...</option>
+    </select>
+</div>
 
-    <!-- Локальная карта импортов: указывает браузеру искать модули в вашей папке js -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "./js/build/three.module.js",
-                "three/addons/": "./js/jsm/"
-            }
+<!-- Локальная карта импортов: указывает браузеру искать модули в вашей папке js -->
+<script type="importmap">
+    {
+        "imports": {
+            "three": "./js/build/three.module.js",
+            "three/addons/": "./js/jsm/"
         }
-    </script>
+    }
+</script>
 
-    <script type="module">
-        import * as THREE from 'three';
-        // Теперь пути внутри "three/addons/" ведут прямо в вашу локальную папку js/
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+<script type="module">
+    import * as THREE from 'three';
+    // Теперь пути внутри "three/addons/" ведут прямо в вашу локальную папку js/
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
-        let camera, scene, renderer, controls, boatModel;
-        const selectEl = document.getElementById('variant-select');
 
-        init();
+    let camera, scene, renderer, controls, boatModel;
+    const selectEl = document.getElementById('variant-select');
 
-                function init() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.25, 20);
-            camera.position.set(2.5, 1.5, 3.0);
+    init();
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            
-            // Настройки цветокоррекции для корректного отображения PBR-текстур
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.2; // Немного увеличим яркость
-            renderer.outputEncoding = THREE.sRGBEncoding; // Гарантирует правильные цвета текстур
-            document.body.appendChild(renderer.domElement);
+    function init() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.25, 20);
+        camera.position.set(2.5, 1.5, 3.0);
 
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
 
-            // Серый цвет фона сцены
-            scene.background = new THREE.Color(0x333333);
+        // Настройки цветокоррекции для корректного отображения PBR-текстур
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2; // Немного увеличим яркость
+
+        // Заменено устаревшее outputEncoding на актуальное outputColorSpace
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        document.body.appendChild(renderer.domElement);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // Серый цвет фона сцены
+        scene.background = new THREE.Color(0x333333);
+
+        // ==========================================
+        // 1. ДОБАВЛЕНИЕ ИСТОЧНИКОВ СВЕТА
+        // ==========================================
+
+        // Полусферный свет (HemisphereLight): мягкий рассеянный свет сверху и снизу
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
+        hemiLight.position.set(0, 20, 0);
+        scene.add(hemiLight);
+
+        // Направленный свет (DirectionalLight): имитирует солнце, дает четкие блики
+        const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        // ==========================================
+        // 2. ГЕНЕРАЦИЯ ОКРУЖЕНИЯ ДЛЯ ОТРАЖЕНИЙ (PBR)
+        // ==========================================
+
+        // PMREMGenerator создает размытую карту освещения прямо из сцены,
+        // что позволяет металлам и глянцу на катере блестеть без внешних файлов .hdr
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        pmremGenerator.compileEquirectangularShader();
+
+        // Генерируем окружение на основе встроенного нейтрального фона
+        scene.environment = pmremGenerator.fromScene(new THREE.Scene()).texture;
+
+        // ==========================================
+
+        loadBoatMesh();
+        window.addEventListener('resize', onWindowResize);
+        animate();
+    }
+
+
+    function loadBoatMesh() {
+        // 1. Инициализируем декодер Draco
+        const dracoLoader = new DRACOLoader();
+
+        // Ссылка указывает на вашу локальную папку jsm/libs/draco/gltf/
+        // Относительный путь строится от index.html: папка js -> jsm -> libs -> draco -> gltf/
+        dracoLoader.setDecoderPath('./js/jsm/libs/draco/gltf/');
+
+        // 2. Создаем основной загрузчик моделей
+        const loader = new GLTFLoader();
+
+        // 3. Передаем Draco-декодер в GLTFLoader
+        loader.setDRACOLoader(dracoLoader);
+
+        const modelUrl = 'models/e_boat.glb';
+
+        loader.load(modelUrl, function (gltf) {
+            boatModel = gltf.scene;
 
             // ==========================================
-            // 1. ДОБАВЛЕНИЕ ИСТОЧНИКОВ СВЕТА
+            // ИСПРАВЛЕНИЕ ПРОЗРАЧНОСТИ И СТЕНOK МОДЕЛИ
             // ==========================================
-            
-            // Полусферный свет (HemisphereLight): мягкий рассеянный свет сверху и снизу
-            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1.5);
-            hemiLight.position.set(0, 20, 0);
-            scene.add(hemiLight);
+            boatModel.traverse((object) => {
+                if (object.isMesh) {
+                    // 1. Делаем материал двухсторонним (теперь стенки видны и снаружи, и изнутри)
+                    object.material.side = THREE.DoubleSide;
 
-            // Направленный свет (DirectionalLight): имитирует солнце, дает четкие блики
-            const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-            dirLight.position.set(5, 10, 7);
-            scene.add(dirLight);
-
-            // ==========================================
-            // 2. ГЕНЕРАЦИЯ ОКРУЖЕНИЯ ДЛЯ ОТРАЖЕНИЙ (PBR)
-            // ==========================================
-            
-            // PMREMGenerator создает размытую карту освещения прямо из сцены,
-            // что позволяет металлам и глянцу на катере блестеть без внешних файлов .hdr
-            const pmremGenerator = new THREE.PMREMGenerator(renderer);
-            pmremGenerator.compileEquirectangularShader();
-            
-            // Генерируем окружение на основе встроенного нейтрального фона
-            scene.environment = pmremGenerator.fromScene(new THREE.Scene()).texture;
-
-            // ==========================================
-
-            loadBoatMesh();
-            window.addEventListener('resize', onWindowResize);
-            animate();
-        }
-
-
-                function loadBoatMesh() {
-            const loader = new GLTFLoader();
-            const modelUrl = 'models/tow_boat.glb'; 
-
-            loader.load(modelUrl, function (gltf) {
-                boatModel = gltf.scene;
-                
-                // ==========================================
-                // ИСПРАВЛЕНИЕ ПРОЗРАЧНОСТИ И СТЕНOK МОДЕЛИ
-                // ==========================================
-                boatModel.traverse((object) => {
-                    if (object.isMesh) {
-                        // 1. Делаем материал двухсторонним (теперь стенки видны и снаружи, и изнутри)
-                        object.material.side = THREE.DoubleSide; 
-                        
-                        // 2. Если модель не должна быть стеклянной, отключаем ошибочный режим прозрачности
-                        // (Удаляет эффект "просвечивания" внутренних деталей сквозь корпус)
-                        object.material.transparent = false;
-                        object.material.depthWrite = true;
-                    }
-                });
-                // ==========================================
-
-                const box = new THREE.Box3().setFromObject(boatModel);
-                const center = box.getCenter(new THREE.Vector3());
-                boatModel.position.sub(center); 
-                scene.add(boatModel);
-
-                const parser = gltf.parser;
-                const variantsExtension = gltf.userData.gltfExtensions && gltf.userData.gltfExtensions.KHR_materials_variants;
-
-                if (variantsExtension && variantsExtension.variants) {
-                    const variants = variantsExtension.variants;
-                    selectEl.innerHTML = '';
-                    selectEl.disabled = false;
-
-                    variants.forEach((variant) => {
-                        const option = document.createElement('option');
-                        option.value = variant.name;
-                        option.textContent = variant.name;
-                        selectEl.appendChild(option);
-                    });
-
-                    selectEl.addEventListener('change', (e) => {
-                        switchBoatVariant(gltf, e.target.value);
-                    });
-                } else {
-                    selectEl.innerHTML = '<option>Варианты материалов не найдены</option>';
+                    // 2. Если модель не должна быть стеклянной, отключаем ошибочный режим прозрачности
+                    // (Удаляет эффект "просвечивания" внутренних деталей сквозь корпус)
+                    object.material.transparent = false;
+                    object.material.depthWrite = true;
                 }
-
-                render();
-            }, undefined, function(error) {
-                console.error("Ошибка загрузки модели:", error);
             });
-        }
+            // ==========================================
 
+            const box = new THREE.Box3().setFromObject(boatModel);
+            const center = box.getCenter(new THREE.Vector3());
+            boatModel.position.sub(center);
+            scene.add(boatModel);
 
-        function switchBoatVariant(gltf, variantName) {
             const parser = gltf.parser;
-            gltf.scene.traverse(async (object) => {
-                if (!object.isMesh) return;
+            const variantsExtension = gltf.userData.gltfExtensions && gltf.userData.gltfExtensions.KHR_materials_variants;
 
-                if (object.userData.gltfExtensions && object.userData.gltfExtensions.KHR_materials_variants) {
-                    await parser.selectVariant(object, variantName);
-                    render();
-                }
-            });
-        }
+            if (variantsExtension && variantsExtension.variants) {
+                const variants = variantsExtension.variants;
+                selectEl.innerHTML = '';
+                selectEl.disabled = false;
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
+                variants.forEach((variant) => {
+                    const option = document.createElement('option');
+                    option.value = variant.name;
+                    option.textContent = variant.name;
+                    selectEl.appendChild(option);
+                });
+
+                selectEl.addEventListener('change', (e) => {
+                    switchBoatVariant(gltf, e.target.value);
+                });
+            } else {
+                selectEl.innerHTML = '<option>Варианты материалов не найдены</option>';
+            }
+
             render();
-        }
+        }, undefined, function(error) {
+            console.error("Ошибка загрузки модели:", error);
+        });
+    }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
-            render();
-        }
 
-        function render() {
-            renderer.render(scene, camera);
-        }
-    </script>
+    function switchBoatVariant(gltf, variantName) {
+        const parser = gltf.parser;
+        gltf.scene.traverse(async (object) => {
+            if (!object.isMesh) return;
+
+            if (object.userData.gltfExtensions && object.userData.gltfExtensions.KHR_materials_variants) {
+                await parser.selectVariant(object, variantName);
+                render();
+            }
+        });
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        render();
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        render();
+    }
+
+    function render() {
+        renderer.render(scene, camera);
+    }
+</script>
 </body>
 </html>
